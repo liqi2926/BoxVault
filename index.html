@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BoxVault</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- 顶部导航栏 -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand" onclick="clearSearchAndGoBox(null)">
+        <div class="brand-logo">📦</div>
+        <div class="brand-title">BoxVault</div>
+      </div>
+      <div class="header-divider"></div>
+      <div id="breadcrumbs" class="breadcrumbs"></div>
+    </div>
+
+    <div class="header-right">
+      <div class="header-search">
+        <span style="font-size:13px;color:var(--text-muted)">🔍</span>
+        <input
+          id="globalSearchInput"
+          type="text"
+          placeholder="搜索文件、备注或箱子..."
+        />
+        <select id="globalTypeSelect">
+          <option value="all">全部类别</option>
+          <option value="doc">文档</option>
+          <option value="img">图片</option>
+          <option value="media">音视频</option>
+          <option value="other">其他</option>
+        </select>
+      </div>
+
+      <div id="headerActions" class="header-actions"></div>
+    </div>
+  </header>
+
+  <!-- 动态主视图 -->
+  <main id="mainView"></main>
+
+  <!-- 隐藏的文件上传控件 (不限制后缀，支持任意格式及自定义后缀) -->
+  <input
+    id="hiddenFileInput"
+    type="file"
+    style="display:none"
+    multiple
+  />
+
+  <!-- ==================== 1. 创建/编辑箱子 模态框 ==================== -->
+  <div id="boxModal" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div id="boxModalTitle" class="modal-title">新建箱子</div>
+        <button class="icon-btn" onclick="closeBoxModal()">✖</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">名称</label>
+          <input id="boxNameInput" class="form-input" type="text" placeholder="输入箱子名称..." />
+        </div>
+        <div class="form-group">
+          <label class="form-label">图标</label>
+          <div id="boxIconPicker" class="icon-picker-row"></div>
+        </div>
+        <div class="form-group" style="margin-bottom:4px">
+          <label class="form-label">颜色</label>
+          <div id="boxColorPicker" class="color-picker-row"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="boxDeleteBtn" class="btn btn-danger" style="margin-right:auto;display:none" onclick="deleteBoxFromModal()">删除箱子</button>
+        <button class="btn" onclick="closeBoxModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveBoxFromModal()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 2. 快速新建文件 模态框 ==================== -->
+  <div id="createDocModal" class="modal-backdrop">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div class="modal-title">快速新建文件</div>
+        <button class="icon-btn" onclick="closeCreateDocModal()">✖</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 160px;gap:10px">
+          <div class="form-group">
+            <label class="form-label">文件名（可直接包含自定义后缀，如 note.abc）</label>
+            <input id="newDocNameInput" class="form-input" type="text" placeholder="例如：会议纪要 或 config.myext" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">默认格式</label>
+            <select id="newDocExtSelect" class="form-select">
+              <option value="md">Markdown (.md)</option>
+              <option value="txt">文本 (.txt)</option>
+              <option value="custom">自定义后缀</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">备注</label>
+          <input id="newDocNoteInput" class="form-input" type="text" placeholder="自定义备注..." />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">内容</label>
+          <textarea id="newDocContentInput" class="form-textarea" rows="10" placeholder="输入内容..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeCreateDocModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveNewDocFromModal()">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 3. 箱子状态存档 模态框 ==================== -->
+  <div id="manualArchiveModal" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">📌 箱子状态存档</div>
+        <button class="icon-btn" onclick="closeManualArchiveModal()">✖</button>
+      </div>
+      <div class="modal-body">
+        <div id="archiveModalBoxInfo" style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;font-weight:500"></div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">版本备注</label>
+          <input
+            id="archiveNoteInput"
+            class="form-input"
+            type="text"
+            placeholder="例如：立项资料整理完毕..."
+            onkeydown="if(event.key==='Enter') confirmBoxArchive()"
+          />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeManualArchiveModal()">取消</button>
+        <button class="btn btn-primary" onclick="confirmBoxArchive()">确认存档</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 4. 箱子历史版本详情与回滚 模态框 ==================== -->
+  <div id="diffModal" class="modal-backdrop">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div id="diffModalTitle" class="modal-title">历史存档状态</div>
+        <button class="icon-btn" onclick="closeDiffModal()">✖</button>
+      </div>
+      <div id="diffModalBody" class="modal-body"></div>
+      <div class="modal-footer">
+        <button id="diffDeleteBtn" class="btn btn-danger" style="margin-right:auto">删除此存档</button>
+        <button class="btn" onclick="closeDiffModal()">关闭</button>
+        <button id="diffRollbackBtn" class="btn btn-amber">⏪ 回滚箱子到此版本</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 5. 预览与编辑 模态框 ==================== -->
+  <div id="previewModal" class="modal-backdrop">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-header">
+        <div id="previewModalTitle" class="modal-title">预览</div>
+        <button class="icon-btn" onclick="closePreviewModal()">✖</button>
+      </div>
+      <div id="previewModalBody" class="modal-body"></div>
+      <div id="previewModalFooter" class="modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- ==================== 6. “我有idea！” 居中速记创建/编辑卡片 ==================== -->
+  <div id="quickIdeaModal" class="modal-backdrop">
+    <div class="modal-dialog quick-idea-dialog">
+      <div class="modal-header">
+        <div id="quickIdeaModalTitle" class="modal-title">💡 我有idea！· 速记书籍</div>
+        <button class="icon-btn" onclick="closeQuickIdeaModal()">✖</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <input id="quickIdeaTitleInput" class="form-input" type="text" placeholder="速记标题（选填，留空自动提取首行内容）" />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <textarea
+            id="quickIdeaContentInput"
+            class="form-textarea"
+            rows="8"
+            placeholder="写下此刻的想法、灵感或速记（保存后将展示在主界面右侧「速记书籍」栏，可随时拖入任意箱子）..."
+            onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault(); saveQuickIdeaFromModal();}"
+          ></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span style="font-size:11.5px;color:var(--text-muted);margin-right:auto">快捷键：Ctrl + Enter 保存 / Esc 取消</span>
+        <button class="btn" onclick="closeQuickIdeaModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveQuickIdeaFromModal()">保存至右侧速记书籍</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 中心偏下浮动按钮组：“我有idea！”、新建箱子、快速新建文件 与拖拽垃圾桶 -->
+  <div id="bottomFloatingGroup" class="bottom-floating-group">
+    <button id="quickThoughtFab" class="quick-thought-fab" onclick="openQuickIdeaModal()" title="我有idea！（弹出居中速记卡，保存至右侧速记书籍栏）">
+      <span class="quick-thought-fab-icon">💡</span>
+      <span class="quick-thought-fab-label">我有idea！</span>
+    </button>
+    <button id="newBoxFab" class="new-box-fab" onclick="openBoxModal(null, state.currentBoxId || null)" title="新建箱子">
+      <span class="quick-thought-fab-icon">📦</span>
+      <span id="newBoxFabLabel" class="quick-thought-fab-label">新建箱子</span>
+    </button>
+    <button id="createDocFab" class="create-doc-fab" style="display:none" onclick="openCreateDocModal()" title="在当前箱子内快速新建文件">
+      <span class="quick-thought-fab-icon">📄</span>
+      <span class="quick-thought-fab-label">快速新建</span>
+    </button>
+    <div
+      id="dragTrashBin"
+      class="drag-trash-bin"
+      title="拖拽箱子或文件到此处删除"
+      ondragover="onTrashDragOver(event)"
+      ondragleave="onTrashDragLeave(event)"
+      ondrop="onTrashDrop(event)"
+    >
+      <span class="trash-bin-icon">🗑️</span>
+      <span class="trash-bin-label">拖入删除</span>
+    </div>
+  </div>
+
+  <!-- 悬停 0.8s 只读观察预览浮窗 (仅支持观察 txt / md / 图片，不可修改和保存) -->
+  <div id="hoverPreviewFloating" class="hover-preview-floating">
+    <div id="hoverPreviewHeader" class="hover-preview-header"></div>
+    <div id="hoverPreviewBody" class="hover-preview-body"></div>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="./db.js"></script>
+  <script src="./fs-sync.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
