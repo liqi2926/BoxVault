@@ -338,6 +338,8 @@ class LocalFolderSync {
         name: f.name,
         note: f.note || '',
         order: f.order || 1,
+        isStarred: Boolean(f.isStarred),
+        starredOrder: f.starredOrder || 0,
         updatedAt: f.updatedAt
       }))
     };
@@ -693,6 +695,8 @@ class LocalFolderSync {
             textContent,
             note: (savedMeta && savedMeta.note) || '',
             order: (savedMeta && savedMeta.order) || fileOrder++,
+            isStarred: Boolean(savedMeta && savedMeta.isStarred),
+            starredOrder: (savedMeta && savedMeta.starredOrder) || 0,
             createdAt: rawFile.lastModified || now,
             updatedAt: rawFile.lastModified || now
           });

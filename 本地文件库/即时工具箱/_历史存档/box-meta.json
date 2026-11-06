@@ -1,0 +1,10 @@
+{
+  "id": "box_instant_toolbox",
+  "name": "即时工具箱",
+  "icon": "⚡",
+  "theme": "amber",
+  "order": 1,
+  "createdAt": 1793871637516,
+  "updatedAt": 1793871637516,
+  "filesMeta": []
+}

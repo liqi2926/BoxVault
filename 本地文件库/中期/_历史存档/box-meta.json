@@ -1,0 +1,32 @@
+{
+  "id": "box_1793867968238_w59jnh",
+  "name": "中期",
+  "icon": "📦",
+  "theme": "indigo",
+  "order": 3,
+  "createdAt": 1793867968238,
+  "updatedAt": 1793870996399,
+  "filesMeta": [
+    {
+      "id": "file_1793867980630_tjf8jz",
+      "name": "中国科学院大学研究生学位论文中期考核登记表.docx",
+      "note": "",
+      "order": 2,
+      "updatedAt": 1793869557493
+    },
+    {
+      "id": "file_1793867980625_w5y4hj",
+      "name": "研究生中期考核实施细则(201937).docx",
+      "note": "",
+      "order": 3,
+      "updatedAt": 1793869557925
+    },
+    {
+      "id": "file_1793870996398_qgc38i",
+      "name": "0-中期考核流程说明.xlsx",
+      "note": "",
+      "order": 4,
+      "updatedAt": 1793871000458
+    }
+  ]
+}

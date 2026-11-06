@@ -79,6 +79,10 @@ const state = {
   editingQuickBookId: null,
   draggedBoxId: null,
   draggedFileId: null,
+  dragSource: null,
+  expandedPinnedBoxes: new Set(),
+  navHistory: [null],
+  navHistoryIdx: 0,
   replacingFileId: null,
   activeObjectUrls: []
 };
@@ -231,8 +235,26 @@ async function reloadAllData() {
 // ==================== 顶部导航与主控 ====================
 
 function renderAll() {
+  const dirScroll = document.querySelector('.dir-tree-scroll');
+  const prevScrollTop = dirScroll ? dirScroll.scrollTop : null;
+
   renderHeader();
   renderMainContent();
+
+  const restoreDirScroll = () => {
+    const newDirScroll = document.querySelector('.dir-tree-scroll');
+    if (newDirScroll) {
+      if (prevScrollTop !== null) {
+        newDirScroll.scrollTop = prevScrollTop;
+      }
+      const activeNode = newDirScroll.querySelector('.dir-tree-node.active');
+      if (activeNode) {
+        activeNode.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+      }
+    }
+  };
+  restoreDirScroll();
+  requestAnimationFrame(restoreDirScroll);
 }
 
 function getBoxTheme(themeId) {
@@ -496,12 +518,60 @@ async function saveQuickIdeaFromModal() {
   showToast(existing ? '速记书籍已更新' : '已添加至右侧「速记书籍」，可拖入任意箱子', '💡');
 }
 
-function navigateToBox(boxId) {
-  state.currentBoxId = boxId || null;
+function navigateToBox(boxId, fromHistory = false) {
+  const targetId = boxId || null;
+  if (!fromHistory) {
+    if (!state.navHistory) {
+      state.navHistory = [state.currentBoxId || null];
+      state.navHistoryIdx = 0;
+    }
+    if (state.navHistory[state.navHistoryIdx] !== targetId) {
+      state.navHistory = state.navHistory.slice(0, state.navHistoryIdx + 1);
+      state.navHistory.push(targetId);
+      state.navHistoryIdx = state.navHistory.length - 1;
+      try {
+        history.pushState({ boxId: targetId }, '', '');
+      } catch (e) {}
+    }
+  }
+
+  state.currentBoxId = targetId;
   state.editingNoteFileId = null;
   state.boxFileFilter = 'all';
   state.mobileHistoryExpanded = false;
   renderAll();
+}
+
+function navigateHistoryBack() {
+  const openModal = document.querySelector('.modal-backdrop.open');
+  if (openModal) {
+    if (openModal.id === 'quickIdeaModal') closeQuickIdeaModal();
+    else if (openModal.id === 'boxModal') closeBoxModal();
+    else if (openModal.id === 'createDocModal') closeCreateDocModal();
+    else if (openModal.id === 'manualArchiveModal') closeManualArchiveModal();
+    else if (openModal.id === 'diffModal') closeDiffModal();
+    else if (openModal.id === 'previewModal') closePreviewModal();
+    else openModal.classList.remove('open');
+    return true;
+  }
+
+  if (state.navHistory && state.navHistoryIdx > 0) {
+    state.navHistoryIdx--;
+    const targetBoxId = state.navHistory[state.navHistoryIdx];
+    navigateToBox(targetBoxId, true);
+    return true;
+  }
+  return false;
+}
+
+function navigateHistoryForward() {
+  if (state.navHistory && state.navHistoryIdx < state.navHistory.length - 1) {
+    state.navHistoryIdx++;
+    const targetBoxId = state.navHistory[state.navHistoryIdx];
+    navigateToBox(targetBoxId, true);
+    return true;
+  }
+  return false;
 }
 
 function toggleMobileHistory() {
@@ -555,52 +625,146 @@ function renderMainContent() {
 
 // ==================== 0. 全部箱子左侧「重点」快速定位栏 ====================
 
+function togglePinnedBoxExpand(boxId) {
+  if (!state.expandedPinnedBoxes) state.expandedPinnedBoxes = new Set();
+  if (state.expandedPinnedBoxes.has(boxId)) {
+    state.expandedPinnedBoxes.delete(boxId);
+  } else {
+    state.expandedPinnedBoxes.add(boxId);
+  }
+  const aside = document.querySelector('.pinned-sidebar');
+  if (aside && aside.parentElement) {
+    aside.outerHTML = renderPinnedSidebar();
+  } else {
+    renderAll();
+  }
+}
+
+function onPinnedBoxDragStart(e, boxId) {
+  state.draggedBoxId = boxId;
+  state.dragSource = 'pinned';
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  // 重点栏箱子不支持拖拽删除，显式不触发垃圾桶
+}
+
+// 重点栏内的文件拖拽：保留拖出到外部程序 / 拖入其他箱子的能力，但不触发垃圾桶删除
+function onPinnedFileDragStart(e, fileId) {
+  e.stopPropagation();
+  onFileDragStart(e, fileId);
+  state.dragSource = 'pinned';
+  hideDragTrashBin();
+}
+
+function renderPinnedFileRow(f, { pinned = false } = {}) {
+  const ext = (f.ext || getExt(f.name) || '').toLowerCase();
+  const meta = getExtMeta(ext);
+  const parentBox = f.boxId ? state.boxes.find((b) => b.id === f.boxId) : null;
+  return `
+    <div class="pinned-file-row ${pinned ? 'is-pinned-file' : ''}"
+         draggable="true"
+         ondragstart="onPinnedFileDragStart(event, '${f.id}')"
+         ondragend="onFileDragEnd(event)"
+         onclick="event.stopPropagation(); openFileNatively('${f.id}')"
+         title="点击用默认程序打开「${escapeHtml(f.name)}」${parentBox ? `&#10;所在箱子：${escapeHtml(parentBox.name)}` : ''}">
+      <span class="pinned-file-tag ${meta.badgeClass}">${meta.icon}</span>
+      <span class="pinned-file-name">${escapeHtml(f.name)}</span>
+      ${pinned && parentBox ? `
+        <span class="pinned-file-locate" title="跳转到所在箱子「${escapeHtml(parentBox.name)}」"
+              onclick="event.stopPropagation(); navigateToBox('${parentBox.id}')">📂</span>
+      ` : ''}
+      <span class="pinned-file-ext-open" title="用系统默认程序打开">↗</span>
+      ${pinned ? `
+        <button class="icon-btn pinned-item-remove pinned-file-remove"
+                onclick="event.stopPropagation(); unpinFile('${f.id}')"
+                title="从重点中移出">✕</button>
+      ` : ''}
+    </div>
+  `;
+}
+
 function renderPinnedSidebar() {
   const pinnedBoxes = state.boxes
     .filter((b) => b.isStarred)
     .sort((a, b) => (a.starredOrder ?? a.order ?? 0) - (b.starredOrder ?? b.order ?? 0));
+  const pinnedFiles = state.files
+    .filter((f) => f.isStarred)
+    .sort((a, b) => (a.starredOrder ?? 0) - (b.starredOrder ?? 0));
+  const totalPinned = pinnedBoxes.length + pinnedFiles.length;
 
   let contentHtml = '';
-  if (pinnedBoxes.length === 0) {
+  if (totalPinned === 0) {
     contentHtml = `
       <div class="pinned-empty-placeholder">
         <div class="pinned-empty-icon">📌</div>
-        <div class="pinned-empty-title">暂无重点箱子</div>
-        <div class="pinned-empty-sub">将中间箱子拖拽到此处<br/>固定为「重点」快速定位</div>
+        <div class="pinned-empty-title">暂无重点内容</div>
+        <div class="pinned-empty-sub">将箱子或文件拖拽到此处<br/>固定为「重点」快速定位</div>
       </div>
     `;
   } else {
     const itemsHtml = pinnedBoxes.map((box) => {
       const theme = getBoxTheme(box.theme);
-      const fileCount = state.files.filter((f) => f.boxId === box.id).length;
+      const boxFiles = state.files.filter((f) => f.boxId === box.id);
+      const fileCount = boxFiles.length;
       const subBoxCount = state.boxes.filter((b) => b.parentId === box.id).length;
+      const isExpanded = state.expandedPinnedBoxes && state.expandedPinnedBoxes.has(box.id);
 
       return `
-        <div class="pinned-box-item"
-             draggable="true"
-             style="--box-accent:${theme.accent}; --box-bg-soft:${theme.soft}"
-             ondragstart="onBoxDragStart(event, '${box.id}')"
-             ondragover="onPinnedItemDragOver(event)"
-             ondragleave="onPinnedItemDragLeave(event)"
-             ondrop="onPinnedItemDrop(event, '${box.id}')"
-             ondragend="onBoxDragEnd(event)"
-             onclick="navigateToBox('${box.id}')">
-          <div class="pinned-item-icon">${escapeHtml(box.icon || '📦')}</div>
-          <div class="pinned-item-info">
-            <div class="pinned-item-name" title="${escapeHtml(box.name)}">${escapeHtml(box.name)}</div>
-            <div class="pinned-item-meta">${fileCount} 文件${subBoxCount > 0 ? ` · ${subBoxCount} 子箱` : ''}</div>
+        <div class="pinned-box-group ${isExpanded ? 'is-expanded' : ''}">
+          <div class="pinned-box-item"
+               draggable="true"
+               style="--box-accent:${theme.accent}; --box-bg-soft:${theme.soft}"
+               ondragstart="onPinnedBoxDragStart(event, '${box.id}')"
+               ondragover="onPinnedItemDragOver(event)"
+               ondragleave="onPinnedItemDragLeave(event)"
+               ondrop="onPinnedItemDrop(event, '${box.id}')"
+               ondragend="onBoxDragEnd(event)"
+               onclick="navigateToBox('${box.id}')"
+               title="点击进入「${escapeHtml(box.name)}」箱子">
+            <div class="pinned-item-icon">${escapeHtml(box.icon || '📦')}</div>
+            <div class="pinned-item-info">
+              <div class="pinned-item-name" title="${escapeHtml(box.name)}">${escapeHtml(box.name)}</div>
+              <div class="pinned-item-meta">${fileCount} 文件${subBoxCount > 0 ? ` · ${subBoxCount} 子箱` : ''}</div>
+            </div>
+            <div class="pinned-item-actions" onclick="event.stopPropagation()">
+              ${fileCount > 0 ? `
+                <button class="icon-btn pinned-item-toggle ${isExpanded ? 'expanded' : ''}"
+                        onclick="togglePinnedBoxExpand('${box.id}')"
+                        title="${isExpanded ? '收起文件' : '展开查看箱内文件'}">
+                  ${isExpanded ? '▾' : '▸'}
+                </button>
+              ` : ''}
+              <button class="icon-btn pinned-item-remove"
+                      onclick="unpinBox('${box.id}')"
+                      title="从重点中移出">✕</button>
+            </div>
           </div>
-          <button class="icon-btn pinned-item-remove"
-                  onclick="event.stopPropagation(); unpinBox('${box.id}')"
-                  title="从重点中移出">✕</button>
+          ${isExpanded ? `
+            <div class="pinned-files-tray">
+              ${boxFiles.length === 0 ? `
+                <div class="pinned-file-empty">箱内暂无文件</div>
+              ` : boxFiles.map((f) => renderPinnedFileRow(f)).join('')}
+              <div class="pinned-tray-footer" onclick="event.stopPropagation(); navigateToBox('${box.id}')">
+                进入箱子查看全部 (${fileCount}) →
+              </div>
+            </div>
+          ` : ''}
         </div>
       `;
     }).join('');
 
+    const pinnedFilesHtml = pinnedFiles.length > 0 ? `
+      <div class="pinned-files-group">
+        <div class="pinned-group-label">📄 重点文件</div>
+        ${pinnedFiles.map((f) => renderPinnedFileRow(f, { pinned: true })).join('')}
+      </div>
+    ` : '';
+
     contentHtml = `
       <div class="pinned-items-list">
         ${itemsHtml}
-        <div class="pinned-drop-more">+ 拖入箱子添加至重点</div>
+        ${pinnedFilesHtml}
+        <div class="pinned-drop-more">+ 拖入箱子或文件添加至重点</div>
       </div>
     `;
   }
@@ -614,7 +778,7 @@ function renderPinnedSidebar() {
         <div class="pinned-sidebar-title">
           <span>⭐</span>
           <span>重点</span>
-          <span class="git-history-count">${pinnedBoxes.length}</span>
+          <span class="git-history-count">${totalPinned}</span>
         </div>
         <span class="pinned-sidebar-hint">快速直达</span>
       </div>
@@ -725,7 +889,7 @@ function renderQuickBooksSidebar() {
 }
 
 function renderQuickBookCard(file) {
-  const excerpt = (file.textContent || '').trim() || '（暂无正文内容，点击编辑补充）';
+  const excerpt = (file.textContent || '').trim() || '（暂无正文内容，点击卡片编辑）';
   return `
     <div class="quick-book-card"
          draggable="true"
@@ -736,7 +900,6 @@ function renderQuickBookCard(file) {
          title="点击编辑速记内容，或按住直接拖拽到左侧/中间任意箱子归档">
       <div class="book-top-bar">
         <span class="quick-book-title" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
-        <span class="quick-book-drag-hint" title="拖拽放入任意箱子">⠿ 拖入箱子</span>
       </div>
       <div class="quick-book-body">
         <div class="quick-book-excerpt">${escapeHtml(excerpt)}</div>
@@ -744,8 +907,7 @@ function renderQuickBookCard(file) {
       <div class="book-footer" onclick="event.stopPropagation()">
         <span class="book-time">${formatShortTime(file.updatedAt)}</span>
         <div class="book-actions">
-          <button class="btn btn-sm" onclick="openQuickIdeaModal('${file.id}')">编辑</button>
-          <button class="btn btn-sm" onclick="openFileNatively('${file.id}')">打开</button>
+          <button class="btn btn-sm quick-book-open-btn" onclick="openFileNatively('${file.id}')" title="用本地默认程序打开">↗</button>
           <button class="btn btn-sm btn-danger" onclick="confirmDeleteFile('${file.id}')">删除</button>
         </div>
       </div>
@@ -901,15 +1063,8 @@ function renderGitSidebar(boxId) {
 
   return `
     <aside class="git-sidebar">
-      <!-- 左上角：文件导入卡片（点击或拖入本地文件） -->
-      <div class="sidebar-import-zone">
-        <div id="fileImportCard" class="file-import-card" onclick="triggerFileUpload()">
-          <div class="file-import-left">
-            <span class="file-import-icon">📥</span>
-            <span class="file-import-text">点击或拖入本地文件导入</span>
-          </div>
-        </div>
-      </div>
+      <!-- 左上角：「重点」快速直达栏（所有页面持续显示，可直接拖入箱子或文件） -->
+      ${renderPinnedSidebar()}
 
       <!-- 左中：目录层级导航树（快速跳转到任意等级目录） -->
       ${renderDirectoryNavSection(boxId)}
@@ -1001,9 +1156,24 @@ function renderBoxRightPane(boxId) {
   }
 
   const isBookMode = state.fileLayoutMode === 'book';
-  const fileItemsHtml = boxFiles.length > 0
-    ? boxFiles.map((file) => (isBookMode ? renderFileBookCard(file) : renderFileItemCard(file))).join('')
-    : `<div class="empty-state">箱子为空，可从左侧导入或新建文件</div>`;
+  const importCardHtml = isBookMode
+    ? `
+      <div id="fileImportCard" class="file-book-card file-import-book-card" onclick="triggerFileUpload()" title="点击选择本地文件导入，或直接将文件拖入此区域">
+        <div class="import-book-inner">
+          <span class="import-book-plus">＋</span>
+          <span class="import-book-title">导入文件</span>
+          <span class="import-book-sub">点击选择，或将本地文件<br/>直接拖入箱子任意位置</span>
+        </div>
+      </div>
+    `
+    : `
+      <div id="fileImportCard" class="file-import-row-card" onclick="triggerFileUpload()" title="点击选择本地文件导入，或直接将文件拖入此区域">
+        <span class="import-book-plus">＋</span>
+        <span class="import-book-title">导入文件</span>
+        <span class="import-book-sub">点击选择，或将本地文件直接拖入箱子任意位置</span>
+      </div>
+    `;
+  const fileItemsHtml = boxFiles.map((file) => (isBookMode ? renderFileBookCard(file) : renderFileItemCard(file))).join('') + importCardHtml;
 
   return `
     <section class="box-main-pane">
@@ -1027,13 +1197,14 @@ function renderBoxRightPane(boxId) {
         </div>
       </div>
 
-      <div class="box-main-scroll">
+      <div class="box-main-scroll" id="boxMainScroll">
         ${subBoxesHtml}
 
-        <!-- 文件条目列表 (行排列 / 书籍卡片排列) -->
-        <div class="${boxFiles.length > 0 ? (isBookMode ? 'files-bookshelf-grid' : 'file-cards-list') : ''}">
+        <!-- 文件条目列表 (行排列 / 书籍卡片排列)，末尾为「导入文件」卡片 -->
+        <div class="${isBookMode ? 'files-bookshelf-grid' : 'file-cards-list'}">
           ${fileItemsHtml}
         </div>
+        <div class="box-drop-overlay"><div class="box-drop-overlay-text">📥 松开鼠标，导入到当前箱子</div></div>
       </div>
     </section>
   `;
@@ -1081,7 +1252,7 @@ function renderFileBookCard(file) {
   return `
     <div class="file-book-card"
          style="--book-spine:${spineColor}"
-         draggable="${state.sortMode === 'manual' ? 'true' : 'false'}"
+         draggable="true"
          data-file-id="${file.id}"
          onmouseenter="onFileHoverEnter(event, '${file.id}')"
          onmouseleave="onFileHoverLeave()"
@@ -1145,7 +1316,7 @@ function renderFileItemCard(file) {
 
   return `
     <div class="file-item-card"
-         draggable="${state.sortMode === 'manual' ? 'true' : 'false'}"
+         draggable="true"
          data-file-id="${file.id}"
          onmouseenter="onFileHoverEnter(event, '${file.id}')"
          onmouseleave="onFileHoverLeave()"
@@ -1500,6 +1671,7 @@ function hideDragTrashBin() {
 }
 
 function onTrashDragOver(e) {
+  if (state.dragSource === 'pinned') return;
   if (!state.draggedBoxId && !state.draggedFileId) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
@@ -1518,13 +1690,23 @@ async function onTrashDrop(e) {
   const bin = document.getElementById('dragTrashBin');
   if (bin) bin.classList.remove('drag-over');
 
+  // 来自左侧「重点」栏的箱子绝对不允许触发拖拽删除
+  if (state.dragSource === 'pinned') {
+    state.draggedBoxId = null;
+    state.draggedFileId = null;
+    state.dragSource = null;
+    hideDragTrashBin();
+    return;
+  }
+
   const draggedBoxId = state.draggedBoxId;
   const draggedFileId = state.draggedFileId;
   state.draggedBoxId = null;
   state.draggedFileId = null;
+  state.dragSource = null;
   hideDragTrashBin();
 
-  // 1. 如果拖入的是箱子
+  // 1. 如果拖入的是箱子 (仅支持主页/主工作区上的箱子)
   if (draggedBoxId) {
     const box = state.boxes.find((b) => b.id === draggedBoxId);
     if (!box) return;
@@ -1562,6 +1744,7 @@ async function onTrashDrop(e) {
 
 function onBoxDragStart(e, boxId) {
   state.draggedBoxId = boxId;
+  state.dragSource = 'main';
   e.currentTarget.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'move';
   showDragTrashBin();
@@ -1579,6 +1762,8 @@ function onBoxDragLeave(e) {
 }
 
 function onBoxDragEnd(e) {
+  state.draggedBoxId = null;
+  state.dragSource = null;
   e.currentTarget.classList.remove('dragging');
   document.querySelectorAll('.drag-over').forEach((el) => el.classList.remove('drag-over'));
   hideDragTrashBin();
@@ -1665,9 +1850,10 @@ async function onBoxDrop(e, targetBoxId) {
 }
 
 function onPinnedZoneDragOver(e) {
-  if (!state.draggedBoxId) return;
+  if (!state.draggedBoxId && !state.draggedFileId) return;
+  if (state.dragSource === 'pinned') return;
   e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
+  e.dataTransfer.dropEffect = state.draggedFileId ? 'copy' : 'move';
   e.currentTarget.classList.add('drag-over');
 }
 
@@ -1678,14 +1864,31 @@ function onPinnedZoneDragLeave(e) {
 }
 
 async function onPinnedZoneDrop(e) {
-  if (!state.draggedBoxId) return;
+  if (!state.draggedBoxId && !state.draggedFileId) return;
   e.preventDefault();
   e.stopPropagation();
   e.currentTarget.classList.remove('drag-over');
+  hideDragTrashBin();
+
+  if (state.dragSource === 'pinned') {
+    state.draggedBoxId = null;
+    state.draggedFileId = null;
+    state.dragSource = null;
+    return;
+  }
+
+  // 文件拖入「重点」栏：固定为重点文件（不移动文件位置）
+  if (state.draggedFileId) {
+    const fileId = state.draggedFileId;
+    state.draggedFileId = null;
+    state.dragSource = null;
+    await pinFile(fileId);
+    return;
+  }
 
   const draggedId = state.draggedBoxId;
   state.draggedBoxId = null;
-  hideDragTrashBin();
+  state.dragSource = null;
 
   const box = state.boxes.find((b) => b.id === draggedId);
   if (!box) return;
@@ -1797,6 +2000,49 @@ async function unpinBox(boxId) {
   showToast(`已从重点移出「${box.name}」`);
 }
 
+async function syncFileStarMeta(file) {
+  if (!file || !file.boxId) return;
+  if (window.localSync && window.localSync.isReady()) {
+    const box = state.boxes.find((b) => b.id === file.boxId);
+    if (box) {
+      const bf = state.files.filter((f) => f.boxId === box.id);
+      await window.localSync.syncBoxMeta(box, state.boxes, bf);
+    }
+  }
+}
+
+async function pinFile(fileId) {
+  const file = state.files.find((f) => f.id === fileId);
+  if (!file) return;
+  if (file.isStarred) {
+    renderAll();
+    showToast(`「${file.name}」已在重点列表中`, '⭐');
+    return;
+  }
+  const maxStarOrder = state.files
+    .filter((f) => f.isStarred)
+    .reduce((m, f) => Math.max(m, f.starredOrder || 0), 0);
+  file.isStarred = true;
+  file.starredOrder = maxStarOrder + 1;
+  await window.boxDB.saveFile(file);
+  await reloadAllData();
+  await syncFileStarMeta(state.files.find((f) => f.id === fileId));
+  renderAll();
+  showToast(`已将文件「${file.name}」加入重点`, '⭐');
+}
+
+async function unpinFile(fileId) {
+  const file = state.files.find((f) => f.id === fileId);
+  if (!file || !file.isStarred) return;
+  file.isStarred = false;
+  file.starredOrder = 0;
+  await window.boxDB.saveFile(file);
+  await reloadAllData();
+  await syncFileStarMeta(state.files.find((f) => f.id === fileId));
+  renderAll();
+  showToast(`已从重点移出「${file.name}」`);
+}
+
 // ==================== 文件导入、新建、备注与拖拽排序 ====================
 
 function setBoxFileFilter(filterId) {
@@ -1839,19 +2085,39 @@ async function handleFileInputChange(e) {
 }
 
 function bindImportCardDropzone() {
-  const card = document.getElementById('fileImportCard');
-  if (!card) return;
+  const zone = document.getElementById('boxMainScroll');
+  if (!zone) return;
 
-  card.addEventListener('dragover', (e) => {
-    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
-      e.preventDefault();
-      card.classList.add('drag-active');
+  const isExternalFileDrag = (e) =>
+    !state.draggedFileId && !state.draggedBoxId &&
+    e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+
+  let dragDepth = 0;
+  zone.addEventListener('dragenter', (e) => {
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    zone.classList.add('drag-active');
+  });
+  zone.addEventListener('dragover', (e) => {
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    zone.classList.add('drag-active');
+  });
+  zone.addEventListener('dragleave', (e) => {
+    if (!isExternalFileDrag(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0 || !zone.contains(e.relatedTarget)) {
+      dragDepth = 0;
+      zone.classList.remove('drag-active');
     }
   });
-  card.addEventListener('dragleave', () => card.classList.remove('drag-active'));
-  card.addEventListener('drop', async (e) => {
-    card.classList.remove('drag-active');
-    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+  zone.addEventListener('drop', async (e) => {
+    dragDepth = 0;
+    zone.classList.remove('drag-active');
+    if (!isExternalFileDrag(e)) return;
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       e.preventDefault();
       e.stopPropagation();
       await addUploadedFilesToCurrentBox(Array.from(e.dataTransfer.files));
@@ -2138,6 +2404,7 @@ function stageFileToBackend(file) {
 
 function onFileDragStart(e, fileId) {
   state.draggedFileId = fileId;
+  state.dragSource = 'file';
   e.currentTarget.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'copyMove';
   showDragTrashBin();
@@ -2205,7 +2472,7 @@ function onFileDragStart(e, fileId) {
 }
 
 function onFileDragOver(e) {
-  if (!state.draggedFileId) return;
+  if (!state.draggedFileId || state.sortMode !== 'manual') return;
   e.preventDefault();
   e.currentTarget.classList.add('drag-over');
 }
@@ -2215,13 +2482,15 @@ function onFileDragLeave(e) {
 }
 
 function onFileDragEnd(e) {
+  state.draggedFileId = null;
+  state.dragSource = null;
   e.currentTarget.classList.remove('dragging');
   document.querySelectorAll('.file-item-card.drag-over, .file-book-card.drag-over').forEach((el) => el.classList.remove('drag-over'));
   hideDragTrashBin();
 }
 
 async function onFileDrop(e, targetFileId) {
-  if (!state.draggedFileId) return;
+  if (!state.draggedFileId || state.sortMode !== 'manual') return;
   e.preventDefault();
   e.stopPropagation();
   e.currentTarget.classList.remove('drag-over');
@@ -2800,7 +3069,52 @@ function bindGlobalEvents() {
     fileInput.addEventListener('change', handleFileInputChange);
   }
 
-  // 新建/编辑箱子弹窗：回车直接确认保存，Esc 直接取消关闭；速记弹窗：Esc 直接关闭
+  // 防止将本地文件拖到非导入区域时浏览器直接打开该文件
+  ['dragover', 'drop'].forEach((evtName) => {
+    window.addEventListener(evtName, (e) => {
+      if (e.defaultPrevented) return;
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files') && !state.draggedFileId) {
+        e.preventDefault();
+        if (evtName === 'dragover') e.dataTransfer.dropEffect = 'none';
+      }
+    });
+  });
+
+  // 鼠标侧键前进后退（Button 3: 后退, Button 4: 前进）与快捷键 Alt+Left / Alt+Right
+  try {
+    history.replaceState({ boxId: state.currentBoxId || null }, '', '');
+  } catch (e) {}
+
+  ['pointerdown', 'mousedown', 'auxclick'].forEach((evtName) => {
+    window.addEventListener(evtName, (e) => {
+      if (e.button === 3 || e.button === 4) {
+        e.preventDefault();
+      }
+    });
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 3) {
+      e.preventDefault();
+      e.stopPropagation();
+      navigateHistoryBack();
+    } else if (e.button === 4) {
+      e.preventDefault();
+      e.stopPropagation();
+      navigateHistoryForward();
+    }
+  });
+
+  window.addEventListener('popstate', (e) => {
+    const targetId = (e.state && ('boxId' in e.state)) ? e.state.boxId : null;
+    const prevIdx = state.navHistory ? state.navHistory.lastIndexOf(targetId, state.navHistoryIdx - 1) : -1;
+    if (prevIdx !== -1) {
+      state.navHistoryIdx = prevIdx;
+    }
+    navigateToBox(targetId, true);
+  });
+
+  // 新建/编辑箱子弹窗：回车直接确认保存，Esc 直接取消关闭；速记弹窗：Esc 直接关闭；Alt+方向键前进后退
   document.addEventListener('keydown', (e) => {
     const boxModal = document.getElementById('boxModal');
     if (boxModal && boxModal.classList.contains('open')) {
@@ -2819,7 +3133,18 @@ function bindGlobalEvents() {
       if (e.key === 'Escape') {
         e.preventDefault();
         closeQuickIdeaModal();
+        return;
       }
+    }
+
+    if (e.altKey && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      navigateHistoryBack();
+      return;
+    } else if (e.altKey && e.key === 'ArrowRight') {
+      e.preventDefault();
+      navigateHistoryForward();
+      return;
     }
   });
 }

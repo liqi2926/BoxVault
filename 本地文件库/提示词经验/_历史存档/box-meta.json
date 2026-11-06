@@ -1,0 +1,25 @@
+{
+  "id": "box_1793869138438_olgle1",
+  "name": "提示词经验",
+  "icon": "🗃️",
+  "theme": "indigo",
+  "order": 5,
+  "createdAt": 1793869138438,
+  "updatedAt": 1793869164008,
+  "filesMeta": [
+    {
+      "id": "file_1793869158211_cmtfja",
+      "name": "润色要求prompt.txt",
+      "note": "",
+      "order": 1,
+      "updatedAt": 1793869558180
+    },
+    {
+      "id": "file_1793869164007_1vynsr",
+      "name": "周报撰写prompt.txt",
+      "note": "",
+      "order": 2,
+      "updatedAt": 1793869558301
+    }
+  ]
+}

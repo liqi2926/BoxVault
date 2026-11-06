@@ -1,0 +1,18 @@
+{
+  "id": "box_1793860837296_hfclg0",
+  "name": "密码与服务器信息",
+  "icon": "🔐",
+  "theme": "rose",
+  "order": 1,
+  "createdAt": 1793860837296,
+  "updatedAt": 1793860849637,
+  "filesMeta": [
+    {
+      "id": "file_1793860849637_gamdoo",
+      "name": "H100服务器.txt",
+      "note": "",
+      "order": 1,
+      "updatedAt": 1793869554919
+    }
+  ]
+}
